@@ -1,653 +1,264 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MapPin, Truck, BarChart3, Navigation, Layers, CheckCircle, Recycle } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Progress } from "@/components/ui/progress";
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { CheckCircle, MapPin, Navigation, Truck } from "lucide-react";
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { LeafletMap } from "./LeafletMap";
+import { RouteStopList } from "./RouteStopList";
+import { CollectionSidebar } from "./CollectionSidebar";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import Web3 from "web3";
-import AbiCore from "@/lib/Abis";
+import { CORE_ABI, CORE_ADDRESS } from "@/lib/contracts";
+import { ensureChain } from "@/lib/network";
+import { Container, formatDuration } from "@/lib/collectors";
+import { useCollectionRoute } from "@/hooks/useCollectionRoute";
+
+const DROP_OFF = { latitude: 6.2455, longitude: -75.5612 };
 
 export function CollectorsMap() {
-    const [containers, setContainers] = useState([]);
-    const [collectionStats, setCollectionStats] = useState({
-        todayWeight: 0,
-        todayContainers: 0,
-        weekWeight: 0,
-        weekContainers: 0,
-        co2Saved: 0,
-    });
-    const location = useLocation();
-    const CONTRACT_ADDRESS = "0x3B677E9ab4C216433Aadc61341DB3C750B493C1b";
-    const dropOffCenter = {
-        name: "Main Drop-off Center",
-        latitude: 6.2455,
-        longitude: -75.5612
-    };
-
-
-    // Estado para rutas visitadas
-    const [visitedRoutes, setVisitedRoutes] = useState<string[]>([]);
-    const [orderedContainers, setOrderedContainers] = useState([]);
-
-    // Cargar rutas visitadas desde localStorage al montar el componente
-    useEffect(() => {
-        const savedVisited = localStorage.getItem("visitedRoutes");
-        if (savedVisited) {
-            setVisitedRoutes(JSON.parse(savedVisited));
-        }
-    }, []);
-
-    useEffect(() => {
-        if (location.state?.preserveRoute) {
-            setRouteOptimized(true);
-        }
-    }, [location.state]);
-
-
-    // Actualizar orderedContainers cuando cambian containers o visitedRoutes
-    useEffect(() => {
-        const nonVisited = containers.filter((c) => !visitedRoutes.includes(c.id));
-        const visited = containers.filter((c) => visitedRoutes.includes(c.id));
-        setOrderedContainers([...nonVisited, ...visited]);
-    }, [containers, visitedRoutes]);
-
-    const allVisited =
-        containers.length > 0 &&
-        visitedRoutes.length === containers.length &&
-        containers.every((c) => visitedRoutes.includes(c.id));
-
-
-    // Guardar visitedRoutes en localStorage cuando cambie
-    useEffect(() => {
-        localStorage.setItem("visitedRoutes", JSON.stringify(visitedRoutes));
-    }, [visitedRoutes]);
-
-    const calculateStats = (containers) => {
-        const today = new Date();
-        const weekAgo = new Date(today);
-        weekAgo.setDate(today.getDate() - 7);
-
-        let todayWeight = 0;
-        let todayContainers = 0;
-        let weekWeight = 0;
-        let weekContainers = 0;
-
-        containers.forEach((container) => {
-            const lastUpdatedDate = new Date(container.lastUpdated);
-            const weight = container.estimatedWeight;
-
-            if (
-                lastUpdatedDate.getUTCFullYear() === today.getUTCFullYear() &&
-                lastUpdatedDate.getUTCMonth() === today.getUTCMonth() &&
-                lastUpdatedDate.getUTCDate() === today.getUTCDate()
-            ) {
-                todayWeight += weight;
-                todayContainers += 1;
-            }
-
-            if (lastUpdatedDate >= weekAgo) {
-                weekWeight += weight;
-                weekContainers += 1;
-            }
-        });
-
-        const co2Saved = parseFloat(((todayWeight + weekWeight) * 0.18).toFixed(2));
-
-        setCollectionStats({
-            todayWeight,
-            todayContainers,
-            weekWeight,
-            weekContainers,
-            co2Saved,
-        });
-    };
-
-    useEffect(() => {
-        fetch("https://zyrcle-backend.diegormdev.site/api/rutas/quemadas")
-            .then((res) => res.json())
-            .then((data) => {
-                setContainers(data);
-                calculateStats(data);
-            })
-            .catch((err) => console.error(err));
-    }, []);
-
+    const route = useCollectionRoute();
     const navigate = useNavigate();
+    const location = useLocation();
+    const [selectedId, setSelectedId] = useState<number | null>(null);
+    const [delivering, setDelivering] = useState(false);
 
-    const navigateTo = (container) => {
-        navigator.geolocation.getCurrentPosition((pos) => {
-            const { latitude, longitude } = pos.coords;
-            const googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${latitude},${longitude}&destination=${container.latitude},${container.longitude}&travelmode=driving`;
-            window.open(googleMapsUrl, "_blank");
-        });
+    // When returning from the verify page, keep the optimized view.
+    useEffect(() => {
+        if (location.state?.preserveRoute) route.resume();
+    }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const openMaps = (lat: number, lng: number) => {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const url = `https://www.google.com/maps/dir/?api=1&origin=${pos.coords.latitude},${pos.coords.longitude}&destination=${lat},${lng}&travelmode=driving`;
+                window.open(url, "_blank");
+            },
+            () => window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, "_blank")
+        );
     };
 
-    const handleSubmitBatchDelivery = async () => {
-        try {
-            const web3 = new Web3(window.ethereum);
-            const contract = new web3.eth.Contract(AbiCore, CONTRACT_ADDRESS);
-            const accounts = await web3.eth.getAccounts();
-            const account = accounts[0];
+    const handleCollect = (c: Container) => {
+        // Verify the EXACT container of this stop (verify page reads state.container).
+        navigate(`/verify-container/${c.id}`, { state: { container: c } });
+    };
 
-            if (visitedRoutes.length === 0) {
-                toast({ title: "No containers", description: "You haven't confirmed any containers yet." });
+    const handleConfirmDelivery = async () => {
+        if (route.collected.length === 0) {
+            toast({ title: "Nothing to deliver", description: "Collect at least one container first." });
+            return;
+        }
+        try {
+            setDelivering(true);
+            if (!(await ensureChain())) {
+                toast({ variant: "destructive", title: "Wrong network", description: "Switch your wallet to Avalanche Fuji." });
                 return;
             }
+            const web3 = new Web3(window.ethereum);
+            await window.ethereum.request({ method: "eth_requestAccounts" });
+            const account = (await web3.eth.getAccounts())[0];
+            const core = new web3.eth.Contract(CORE_ABI, CORE_ADDRESS);
 
-            // 🔥 Paso 1: Confirmar (quemar) todos los contenedores con datos dummy
-            for (const id of visitedRoutes) {
-                await contract.methods
-                    .confirmCollection(
-                        account,
-                        parseInt(id),
-                        "Plástico", // tipo quemado
-                        "QmDummyCid123456789", // CID quemado
-                        1000 // peso en gramos quemado (1kg)
-                    )
-                    .send({ from: account });
-            }
+            // Collections were already confirmed (with real photos/weights) on the
+            // verify page; the batch only bundles the collected container ids.
+            await core.methods.submitBatchDelivery(route.collected).send({ from: account });
 
-            // 🔥 Paso 2: Enviar el batch
-            const containerIds = visitedRoutes.map((id) => parseInt(id));
-            await contract.methods.submitBatchDelivery(containerIds).send({ from: account });
-
-            toast({
-                title: "Batch Sent!",
-                description: "The delivery was submitted successfully.",
-            });
-
-            setVisitedRoutes([]); // Limpiar rutas si quieres
+            toast({ title: "Delivery confirmed!", description: "Today's batch was submitted on-chain." });
+            route.reset();
         } catch (err) {
             console.error("Delivery failed:", err);
-            toast({
-                variant: "destructive",
-                title: "Error",
-                description: "Could not submit delivery.",
-            });
+            toast({ variant: "destructive", title: "Delivery failed", description: "Could not submit the batch. Try again." });
+        } finally {
+            setDelivering(false);
         }
     };
-
-
-    const handleArrived = (container) => {
-        // Marcar la ruta como visitada y moverla al final
-        setVisitedRoutes((prev) => {
-            if (!prev.includes(container.id)) {
-                return [...prev, container.id];
-            }
-            return prev;
-        });
-        // Redirigir a la página de verificación con los datos del contenedor
-        navigate(`/verify-container/${container.id}`, { state: { container } });
-    };
-
-    const resetVisitedRoutes = () => {
-        setVisitedRoutes([]);
-        localStorage.removeItem("visitedRoutes");
-    };
-
-    const [selectedContainer, setSelectedContainer] = useState<number | null>(null);
-    const [routeOptimized, setRouteOptimized] = useState(false);
-    const [mapLoaded, setMapLoaded] = useState(true);
-
-    const optimizeRoute = () => {
-        setRouteOptimized(true);
-        setTimeout(() => {
-            setSelectedContainer(1);
-        }, 1000);
-    };
-
-    const statusColor = (status: string) => {
-        switch (status) {
-            case "Urgent":
-                return "text-red-600 bg-red-100";
-            case "High":
-                return "text-orange-600 bg-orange-100";
-            case "Medium":
-                return "text-yellow-600 bg-yellow-100";
-            case "Low":
-                return "text-green-600 bg-green-100";
-            default:
-                return "text-gray-600 bg-gray-100";
-        }
-    };
-
-    const calculateDistance = (lat1, lon1, lat2, lon2) => {
-        const R = 6371;
-        const dLat = (lat2 - lat1) * (Math.PI / 180);
-        const dLon = (lon2 - lon1) * (Math.PI / 180);
-        const a =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(lat1 * (Math.PI / 180)) *
-            Math.cos(lat2 * (Math.PI / 180)) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        const distance = R * c;
-        return distance;
-    };
-
-    const estimateTime = (totalDistance) => {
-        const averageSpeed = 30;
-        return totalDistance / averageSpeed;
-    };
-
-
-    const [totalDistance, setTotalDistance] = useState(0);
-    const [estimatedTime, setEstimatedTime] = useState(0);
-
-    useEffect(() => {
-        if (routeOptimized && containers.length > 1) {
-            let totalDistanceCalc = 0;
-            for (let i = 0; i < containers.length - 1; i++) {
-                totalDistanceCalc += calculateDistance(
-                    containers[i].latitude,
-                    containers[i].longitude,
-                    containers[i + 1].latitude,
-                    containers[i + 1].longitude
-                );
-            }
-
-            setTotalDistance(totalDistanceCalc);
-            setEstimatedTime(estimateTime(totalDistanceCalc));
-        }
-    }, [routeOptimized, containers]);
-
-    const routeDescription = routeOptimized
-        ? `Optimized route with ${containers.length} collection points · Est. time: ${Math.floor(estimatedTime)}h ${Math.round((estimatedTime % 1) * 60)}m · Distance: ${totalDistance.toFixed(2)} km`
-        : "Click 'Optimize Route' to start your collection journey!";
 
     return (
-        <TooltipProvider>
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 max-w-7xl mx-auto">
-                {/* Mapa y Rutas - 8 columnas */}
-                <div className="lg:col-span-8 space-y-6">
-                    {!allVisited && (
-                        <Card className="bg-eco-emerald/10 border-eco-emerald/20 rounded-xl p-4 shadow-md mb-6 animate-fade-in">
-                            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-                                <div>
-                                    <h3 className="text-lg font-bold text-eco-forest flex items-center">
-                                        <Truck className="h-5 w-5 mr-2 text-eco-emerald" />
-                                        All routes completed!
-                                    </h3>
-                                    <p className="text-sm text-eco-forest/70">
-                                        Proceed to the drop-off center to finalize today's batch.
-                                    </p>
-                                </div>
-                                <div className="flex gap-2">
-                                    <Button
-                                        variant="secondary"
-                                        onClick={() => navigateTo(dropOffCenter)}
-                                        className="bg-white text-eco-emerald hover:bg-eco-emerald/10"
-                                    >
-                                        Navigate to Drop-off
-                                    </Button>
-                                    <Button
-                                        onClick={handleSubmitBatchDelivery}
-                                        className="bg-eco-emerald text-white hover:bg-eco-emerald-dark"
-                                    >
-                                        Confirm Delivery
-                                    </Button>
-                                </div>
-                            </div>
-                        </Card>
-                    )}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 max-w-7xl mx-auto">
+            <div className="lg:col-span-8 space-y-6">
+                <PhaseBanner
+                    phase={route.phase}
+                    collectedCount={route.stats.collectedCount}
+                    totalCount={route.stats.totalCount}
+                    optimizing={route.optimizing}
+                    onOptimize={route.optimize}
+                    onNavigateDropoff={() => openMaps(DROP_OFF.latitude, DROP_OFF.longitude)}
+                    onConfirmDelivery={handleConfirmDelivery}
+                    delivering={delivering}
+                />
 
-                    <Card className="shadow-md border-0 rounded-xl overflow-hidden">
-                        <CardHeader className="bg-gradient-to-r from-eco-lime/10 to-eco-emerald/10">
-                            <div className="flex justify-between items-center">
-                                <div>
-                                    <CardTitle className="flex items-center text-2xl text-eco-forest">
-                                        <MapPin className="h-6 w-6 mr-2 text-eco-emerald" />
-                                        Collection Map
-                                    </CardTitle>
-                                    <CardDescription className="text-eco-forest/70">
-                                        Navigate optimized waste collection routes in Medellín
-                                    </CardDescription>
-                                </div>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant={routeOptimized ? "outline" : "default"}
-                                            size="lg"
-                                            className={`flex items-center transition-all duration-200 ${routeOptimized
-                                                ? "bg-eco-emerald text-white hover:bg-eco-emerald-dark"
-                                                : "bg-eco-forest text-white hover:bg-eco-forest-dark"
-                                                }`}
-                                            onClick={optimizeRoute}
-                                        >
-                                            <Navigation className="h-5 w-5 mr-2" />
-                                            {routeOptimized ? "Route Optimized" : "Optimize Route"}
+                <Card className="shadow-md border-0 rounded-xl overflow-hidden">
+                    <CardHeader className="bg-gradient-to-r from-eco-lime/10 to-eco-emerald/10">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <CardTitle className="flex items-center text-2xl text-eco-forest">
+                                    <MapPin className="h-6 w-6 mr-2 text-eco-emerald" />
+                                    Collection Map
+                                </CardTitle>
+                                <CardDescription className="text-eco-forest/70">
+                                    Waste collection routes in Medellín
+                                </CardDescription>
+                            </div>
+                            <Button
+                                size="lg"
+                                disabled={route.optimizing || route.loading}
+                                onClick={route.optimize}
+                                className={route.optimized ? "bg-eco-emerald text-white hover:bg-eco-emerald-dark" : "bg-eco-forest text-white hover:bg-eco-forest-dark"}
+                            >
+                                <Navigation className="h-5 w-5 mr-2" />
+                                {route.optimizing ? "Optimizing…" : route.optimized ? "Re-optimize" : "Optimize Route"}
+                            </Button>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="p-4">
+                        <LeafletMap
+                            containers={route.route}
+                            userLocation={route.userLocation}
+                            showRoute={route.optimized}
+                            selectedContainerId={selectedId}
+                        />
+                    </CardContent>
+                </Card>
+
+                <Card className="shadow-md border-0 rounded-xl">
+                    <CardHeader className="bg-eco-forest/5">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <CardTitle className="flex items-center text-2xl text-eco-forest">
+                                    <Truck className="h-6 w-6 mr-2 text-eco-emerald" />
+                                    Current Route
+                                </CardTitle>
+                                <CardDescription className="text-eco-forest/70">
+                                    {route.optimized
+                                        ? `${route.route.length} stops · ${route.stats.collectedCount} collected · Est. ${formatDuration(route.estimatedHours)} · ${route.totalDistance.toFixed(2)} km`
+                                        : "Optimize a route to begin your collection journey."}
+                                </CardDescription>
+                            </div>
+                            {route.optimized && (
+                                <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                        <Button variant="outline" size="sm" className="text-eco-forest hover:bg-eco-forest/10">
+                                            Reset Routes
                                         </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        Generate the most efficient collection path
-                                    </TooltipContent>
-                                </Tooltip>
-                            </div>
-                        </CardHeader>
-                        <CardContent className="p-4">
-                            {!mapLoaded ? (
-                                <div className="flex items-center justify-center h-[500px] bg-eco-forest/5 rounded-lg">
-                                    <div className="text-center space-y-4">
-                                        <div className="animate-spin h-8 w-8 border-4 border-eco-emerald border-t-transparent rounded-full mx-auto"></div>
-                                        <p className="text-eco-forest">Loading map...</p>
-                                    </div>
-                                </div>
-                            ) : (
-                                <LeafletMap
-                                    showRoute={routeOptimized}
-                                    selectedContainerId={selectedContainer}
-                                />
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                            <AlertDialogTitle>Reset collected stops?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                                This clears the collected progress for this route. It does not undo any on-chain transactions.
+                                            </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction onClick={route.reset}>Reset</AlertDialogAction>
+                                        </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                </AlertDialog>
                             )}
-                        </CardContent>
-                    </Card>
-
-                    <Card className="shadow-md border-0 rounded-xl">
-                        <CardHeader className="bg-eco-forest/5">
-                            <div className="flex justify-between items-center">
-                                <div>
-                                    <CardTitle className="flex items-center text-2xl text-eco-forest">
-                                        <Truck className="h-6 w-6 mr-2 text-eco-emerald" />
-                                        Current Route
-                                    </CardTitle>
-                                    <CardDescription className="text-eco-forest/70">
-                                        {routeDescription}
-                                    </CardDescription>
-                                </div>
-                                {routeOptimized && (
-                                    <AlertDialog>
-                                        <AlertDialogTrigger asChild>
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="text-eco-forest hover:bg-eco-forest/10"
-                                            >
-                                                Reset Routes
-                                            </Button>
-                                        </AlertDialogTrigger>
-                                        <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                                <AlertDialogTitle>Reset Visited Routes?</AlertDialogTitle>
-                                                <AlertDialogDescription>
-                                                    This will clear all visited routes and reset the route order. This action cannot be undone.
-                                                </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                <AlertDialogAction onClick={resetVisitedRoutes}>
-                                                    Reset
-                                                </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                        </AlertDialogContent>
-                                    </AlertDialog>
-                                )}
+                        </div>
+                    </CardHeader>
+                    <CardContent className="p-6">
+                        {route.optimized ? (
+                            <RouteStopList
+                                stops={route.route}
+                                isCollected={route.isCollected}
+                                onNavigate={(c) => openMaps(c.latitude, c.longitude)}
+                                onCollect={handleCollect}
+                            />
+                        ) : (
+                            <div className="text-center text-eco-forest/60 italic py-6">
+                                Optimize a route to view collection points.
                             </div>
-                        </CardHeader>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
 
-                        <CardContent className="p-6">
-                            {routeOptimized ? (
-                                orderedContainers.length > 0 ? (
-                                    <Accordion
-                                        type="single"
-                                        collapsible
-                                        defaultValue={
-                                            orderedContainers.length > 0 &&
-                                                !visitedRoutes.includes(orderedContainers[0].id)
-                                                ? `container-${orderedContainers[0].id}`
-                                                : undefined
-                                        }
-                                        className="space-y-3"
-                                    >
-                                        {orderedContainers.map((container, index) => {
-                                            const isVisited = visitedRoutes.includes(container.id);
-                                            return (
-                                                <AccordionItem
-                                                    key={container.id}
-                                                    value={`container-${container.id}`}
-                                                    className={`border rounded-lg shadow-sm transition-all duration-300 ${isVisited ? "bg-gray-50 opacity-80" : "bg-white"
-                                                        }`}
-                                                >
-                                                    <AccordionTrigger
-                                                        className={`px-4 py-3 rounded-t-lg hover:bg-eco-forest/5 ${isVisited ? "text-gray-600" : "text-eco-forest"
-                                                            }`}
-                                                    >
-                                                        <div className="flex justify-between items-center w-full font-semibold">
-                                                            <div className="flex items-center space-x-3 truncate">
-                                                                <span
-                                                                    className={`w-6 h-6 flex items-center justify-center rounded-full ${isVisited
-                                                                        ? "bg-gray-200 text-gray-600"
-                                                                        : "bg-eco-emerald text-white"
-                                                                        }`}
-                                                                >
-                                                                    {index + 1}
-                                                                </span>
-                                                                {isVisited && (
-                                                                    <CheckCircle className="h-5 w-5 text-gray-400" />
-                                                                )}
-                                                                <span>{container.address}</span>
-                                                            </div>
-                                                            <Badge
-                                                                className={`${statusColor(
-                                                                    container.status
-                                                                )} font-medium`}
-                                                            >
-                                                                {container.status}
-                                                            </Badge>
-                                                        </div>
-                                                    </AccordionTrigger>
-                                                    <AccordionContent
-                                                        className={`px-4 py-4 space-y-4 ${isVisited ? "text-gray-600" : "text-eco-forest"
-                                                            }`}
-                                                    >
-                                                        <div className="flex justify-between items-start">
-                                                            <div>
-                                                                <p className="text-sm font-medium">{container.type}</p>
-                                                                <p className="text-sm">
-                                                                    Weight: {container.estimatedWeight} kg
-                                                                </p>
-                                                            </div>
-                                                        </div>
-                                                        <div>
-                                                            <div className="flex justify-between text-sm">
-                                                                <span>Fill Level</span>
-                                                                <span className="font-medium">
-                                                                    {container.fillPercentage}%
-                                                                </span>
-                                                            </div>
-                                                            <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                    <Progress
-                                                                        value={container.fillPercentage}
-                                                                        className={`h-3 mt-1 ${isVisited
-                                                                            ? "bg-gray-300"
-                                                                            : "bg-eco-emerald/20"
-                                                                            }`}
-                                                                    />
-                                                                </TooltipTrigger>
-                                                                <TooltipContent>
-                                                                    {container.fillPercentage}% Full
-                                                                </TooltipContent>
-                                                            </Tooltip>
-                                                        </div>
-                                                        <div className="flex space-x-2">
-                                                            <Button
-                                                                onClick={() => navigateTo(container)}
-                                                                className={`flex-1 transition-all duration-200 ${isVisited
-                                                                    ? "bg-gray-300 hover:bg-gray-400 text-gray-700"
-                                                                    : "bg-eco-emerald hover:bg-eco-emerald-dark text-white"
-                                                                    }`}
-                                                            >
-                                                                <Navigation className="h-5 w-5 mr-2" />
-                                                                Navigate
-                                                            </Button>
-                                                            <Button
-                                                                onClick={() => handleArrived(container)}
-                                                                className={`flex-1 transition-all duration-200 ${isVisited
-                                                                    ? "bg-gray-300 hover:bg-gray-400 text-gray-700"
-                                                                    : "bg-eco-lime hover:bg-eco-lime-dark text-white"
-                                                                    }`}
-                                                            >
-                                                                <CheckCircle className="h-5 w-5 mr-2" />
-                                                                Already done
-                                                            </Button>
-                                                        </div>
-                                                    </AccordionContent>
-                                                </AccordionItem>
-                                            );
-                                        })}
-                                    </Accordion>
-                                ) : (
-                                    <div className="text-center text-eco-forest/60 italic">
-                                        No collection points available. Try optimizing the route again.
-                                    </div>
-                                )
-                            ) : (
-                                <div className="text-center text-eco-forest/60 italic">
-                                    Optimize a route to view collection points.
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
+            <div className="lg:col-span-4">
+                <CollectionSidebar
+                    containers={route.containers}
+                    isCollected={route.isCollected}
+                    selectedId={selectedId}
+                    onSelect={setSelectedId}
+                    stats={route.stats}
+                />
+            </div>
+        </div>
+    );
+}
 
+/** Phase-aware banner: planning → collecting → delivery. */
+function PhaseBanner({
+    phase, collectedCount, totalCount, optimizing, onOptimize, onNavigateDropoff, onConfirmDelivery, delivering,
+}: {
+    phase: "planning" | "collecting" | "delivery";
+    collectedCount: number;
+    totalCount: number;
+    optimizing: boolean;
+    onOptimize: () => void;
+    onNavigateDropoff: () => void;
+    onConfirmDelivery: () => void;
+    delivering: boolean;
+}) {
+    if (phase === "planning") {
+        return (
+            <Card className="bg-eco-forest/5 border-eco-forest/10 rounded-xl p-4 shadow-sm">
+                <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div>
+                        <h3 className="text-lg font-bold text-eco-forest flex items-center">
+                            <Navigation className="h-5 w-5 mr-2 text-eco-emerald" />
+                            Plan your route
+                        </h3>
+                        <p className="text-sm text-eco-forest/70">Optimize the collection route to get started.</p>
+                    </div>
+                    <Button onClick={onOptimize} disabled={optimizing} className="bg-eco-forest text-white hover:bg-eco-forest-dark">
+                        {optimizing ? "Optimizing…" : "Optimize Route"}
+                    </Button>
                 </div>
+            </Card>
+        );
+    }
 
-                {/* Sidebar - 4 columnas */}
-                <div className="lg:col-span-4 space-y-6">
-                    <Card className="shadow-md border-0 rounded-xl">
-                        <CardHeader className="bg-eco-forest/5">
-                            <CardTitle className="flex items-center text-2xl text-eco-forest">
-                                <Layers className="h-6 w-6 mr-2 text-eco-emerald" />
-                                Collection Points
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-0">
-                            <Tabs defaultValue="fill" className="w-full">
-                                <TabsList className="w-full justify-start bg-eco-forest/5">
-                                    <TabsTrigger value="fill" className="text-sm">
-                                        By Fill Level
-                                    </TabsTrigger>
-                                </TabsList>
-                                <TabsContent value="fill" className="m-0">
-                                    <div className="divide-y">
-                                        {[...containers]
-                                            .sort((a, b) => b.fillPercentage - a.fillPercentage)
-                                            .map((container) => (
-                                                <div
-                                                    key={container.id}
-                                                    className={`p-4 cursor-pointer transition-all duration-200 hover:bg-eco-forest/10 ${selectedContainer === container.id
-                                                        ? "bg-eco-forest/10"
-                                                        : ""
-                                                        }`}
-                                                    onClick={() => setSelectedContainer(container.id)}
-                                                >
-                                                    <div className="flex justify-between items-center">
-                                                        <div className="space-y-1">
-                                                            <h4 className="font-semibold text-eco-forest truncate max-w-[200px]">
-                                                                {container.address}
-                                                            </h4>
-                                                            <p className="text-sm text-eco-forest/60">
-                                                                {container.type} · Updated{" "}
-                                                                {new Date(container.lastUpdated).toLocaleDateString()}
-                                                            </p>
-                                                        </div>
-                                                        <Badge
-                                                            className={`${statusColor(
-                                                                container.status
-                                                            )} flex items-center space-x-1`}
-                                                        >
-                                                            <Recycle className="h-4 w-4" />
-                                                            <span>{container.fillPercentage}%</span>
-                                                        </Badge>
-                                                    </div>
-                                                    <Progress
-                                                        value={container.fillPercentage}
-                                                        className="h-2 mt-2 bg-eco-emerald/20"
-                                                    />
-                                                </div>
-                                            ))}
-                                    </div>
-                                </TabsContent>
-                            </Tabs>
-                        </CardContent>
-                    </Card>
+    if (phase === "collecting") {
+        const pct = totalCount ? Math.round((collectedCount / totalCount) * 100) : 0;
+        return (
+            <Card className="bg-eco-emerald/10 border-eco-emerald/20 rounded-xl p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                    <Truck className="h-5 w-5 text-eco-emerald shrink-0" />
+                    <div className="flex-1">
+                        <h3 className="text-lg font-bold text-eco-forest">Collection in progress</h3>
+                        <p className="text-sm text-eco-forest/70">
+                            {collectedCount} of {totalCount} stops collected ({pct}%). Visit each stop and verify the pickup.
+                        </p>
+                    </div>
+                </div>
+            </Card>
+        );
+    }
 
-                    <Card className="shadow-md border-0 rounded-xl">
-                        <CardHeader className="bg-eco-forest/5">
-                            <CardTitle className="flex items-center text-2xl text-eco-forest">
-                                <BarChart3 className="h-6 w-6 mr-2 text-eco-emerald" />
-                                Collection Stats
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            <div>
-                                <p className="text-sm font-medium text-eco-forest/80 mb-2">
-                                    Today's Collections
-                                </p>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="bg-eco-forest/10 p-4 rounded-lg shadow-sm">
-                                        <p className="text-xs text-eco-forest/60">Weight</p>
-                                        <p className="text-lg font-bold text-eco-forest flex items-center">
-                                            <Truck className="h-4 w-4 mr-2 text-eco-emerald" />
-                                            {collectionStats.todayWeight} kg
-                                        </p>
-                                    </div>
-                                    <div className="bg-eco-forest/10 p-4 rounded-lg shadow-sm">
-                                        <p className="text-xs text-eco-forest/60">Containers</p>
-                                        <p className="text-lg font-bold text-eco-forest flex items-center">
-                                            <Layers className="h-4 w-4 mr-2 text-eco-emerald" />
-                                            {collectionStats.todayContainers}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div>
-                                <p className="text-sm font-medium text-eco-forest/80 mb-2">
-                                    This Week
-                                </p>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="bg-eco-forest/10 p-4 rounded-lg shadow-sm">
-                                        <p className="text-xs text-eco-forest/60">Weight</p>
-                                        <p className="text-lg font-bold text-eco-forest flex items-center">
-                                            <Truck className="h-4 w-4 mr-2 text-eco-emerald" />
-                                            {collectionStats.weekWeight} kg
-                                        </p>
-                                    </div>
-                                    <div className="bg-eco-forest/10 p-4 rounded-lg shadow-sm">
-                                        <p className="text-xs text-eco-forest/60">Containers</p>
-                                        <p className="text-lg font-bold text-eco-forest flex items-center">
-                                            <Layers className="h-4 w-4 mr-2 text-eco-emerald" />
-                                            {collectionStats.weekContainers}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div>
-                                <p className="text-sm font-medium text-eco-forest/80 mb-2">
-                                    Carbon Saved (Monthly)
-                                </p>
-                                <div className="bg-gradient-to-r from-eco-lime/80 to-eco-emerald/80 p-4 rounded-lg text-white shadow-sm">
-                                    <div className="flex items-center justify-between">
-                                        <p className="text-sm font-medium">CO₂ Equivalent</p>
-                                        <p className="text-lg font-bold flex items-center">
-                                            <Recycle className="h-5 w-5 mr-2" />
-                                            {collectionStats.co2Saved} kg
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
+    // delivery
+    return (
+        <Card className="bg-eco-emerald/10 border-eco-emerald/20 rounded-xl p-4 shadow-md animate-fade-in">
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                <div>
+                    <h3 className="text-lg font-bold text-eco-forest flex items-center">
+                        <CheckCircle className="h-5 w-5 mr-2 text-eco-emerald" />
+                        All stops collected!
+                    </h3>
+                    <p className="text-sm text-eco-forest/70">Head to the drop-off center to finalize today's batch.</p>
+                </div>
+                <div className="flex gap-2">
+                    <Button variant="secondary" onClick={onNavigateDropoff} className="bg-white text-eco-emerald hover:bg-eco-emerald/10">
+                        Navigate to Drop-off
+                    </Button>
+                    <Button onClick={onConfirmDelivery} disabled={delivering} className="bg-eco-emerald text-white hover:bg-eco-emerald-dark">
+                        {delivering ? "Confirming…" : "Confirm Delivery"}
+                    </Button>
                 </div>
             </div>
-        </TooltipProvider>
+        </Card>
     );
 }

@@ -22,10 +22,11 @@ import { Select, SelectTrigger, SelectContent, SelectItem } from "@/components/u
 import { CheckCircle, Recycle } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import Web3 from "web3";
-import AbiCore from "@/lib/Abis";
+import { CORE_ABI, CORE_ADDRESS } from "@/lib/contracts";
+import { ensureChain } from "@/lib/network";
 
-const CONTRACT_ABI = AbiCore;
-const CONTRACT_ADDRESS = "0x3B677E9ab4C216433Aadc61341DB3C750B493C1b";
+const CONTRACT_ABI = CORE_ABI;
+const CONTRACT_ADDRESS = CORE_ADDRESS;
 const VERIFIER_ROLE = Web3.utils.keccak256("VERIFIER_ROLE");
 
 const EventHistoryPage = () => {
@@ -39,6 +40,8 @@ const EventHistoryPage = () => {
     const { toast } = useToast();
     const loadEvents = async () => {
         try {
+            if (!window.ethereum) return;
+            await ensureChain();
             const web3 = new Web3(window.ethereum);
             const contract = new web3.eth.Contract(CONTRACT_ABI, CONTRACT_ADDRESS);
             const latestBlock = await web3.eth.getBlockNumber();
@@ -106,6 +109,7 @@ const EventHistoryPage = () => {
 
     const handleValidateEvent = async () => {
         try {
+            await ensureChain();
             const web3 = new Web3(window.ethereum);
             const contract = new web3.eth.Contract(CONTRACT_ABI, CONTRACT_ADDRESS);
             const accounts = await web3.eth.getAccounts();

@@ -6,14 +6,14 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, CircleDollarSign } from "lucide-react";
 import Web3 from "web3";
-import AbiToken from "@/lib/TokenAbi";
+import { TOKEN_ABI, TOKEN_ADDRESS } from "@/lib/contracts";
+import { ensureChain } from "@/lib/network";
 
-const TOKEN_ADDRESS = "0xdaE9f1674b494B72210d7FBBEb27Fc32d590D7EA";
 
 // Función utilitaria para obtener balance
 async function getZirBalance(address: string): Promise<number> {
     const web3 = new Web3(window.ethereum);
-    const token = new web3.eth.Contract(AbiToken, TOKEN_ADDRESS);
+    const token = new web3.eth.Contract(TOKEN_ABI, TOKEN_ADDRESS);
     const balance = await token.methods.balanceOf(address).call();
     return parseFloat(web3.utils.fromWei(balance, "ether"));
 }
@@ -24,6 +24,8 @@ const Marketplace = () => {
     useEffect(() => {
         const fetchBalance = async () => {
             try {
+                if (!window.ethereum) return;
+                await ensureChain();
                 const web3 = new Web3(window.ethereum);
                 const accounts = await web3.eth.getAccounts();
                 const address = accounts[0] || sessionStorage.getItem("walletAddress");

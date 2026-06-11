@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { API_BASE_URL } from "@/lib/api";
+import { ensureChain } from "@/lib/network";
 import { useParams, useLocation, useNavigate } from "react-router-dom";
 import { Navbar } from "@/components/layout/Navbar";
 import { useToast } from "@/components/ui/use-toast";
@@ -26,7 +28,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import QRCodeScanner from "./QRCodeScanner";
 import axios from "axios";
 import { configDotenv } from 'dotenv'
-import AbiCore from "@/lib/Abis";
+import { CORE_ABI, CORE_ADDRESS } from "@/lib/contracts";
+import { loadCollected, saveCollected } from "@/lib/collectors";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "@radix-ui/react-alert-dialog";
 import { AlertDialogFooter, AlertDialogHeader } from "../ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@radix-ui/react-dialog";
@@ -56,7 +59,7 @@ export function ContainerVerification() {
         if (!containerData && containerId) {
             console.log("POST request triggered with code:", containerId);
 
-            fetch("https://zyrcle-backend.diegormdev.site/api/contenedor/validar-codigo", {
+            fetch(`${API_BASE_URL}/api/contenedor/validar-codigo`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ codigo: containerId }),
@@ -75,6 +78,11 @@ export function ContainerVerification() {
         }
     }, [containerId, containerData]);
 
+    // Arriving from a route stop: the container is already known, so skip the QR step.
+    useEffect(() => {
+        if (state?.container) setQrScanned(true);
+    }, [state]);
+
     const handleQrScan = async (result: string) => {
         if (!/^\d{6}$/.test(result)) {
             setError("Invalid QR code. Must be a 6-digit number.");
@@ -82,7 +90,7 @@ export function ContainerVerification() {
         }
 
         try {
-            const response = await fetch("https://zyrcle-backend.diegormdev.site/api/contenedor/validar-codigo", {
+            const response = await fetch(`${API_BASE_URL}/api/contenedor/validar-codigo`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ codigo: result }),
@@ -95,7 +103,7 @@ export function ContainerVerification() {
                 setError(null);
 
                 // ✅ Obtener lista de contenedores
-                const listResponse = await fetch("https://zyrcle-backend.diegormdev.site/api/rutas/quemadas");
+                const listResponse = await fetch(`${API_BASE_URL}/api/rutas/quemadas`);
                 const containers = await listResponse.json();
 
                 // ✅ Elegir uno aleatorio
@@ -179,11 +187,10 @@ export function ContainerVerification() {
             duration: 4000,
         });
 
-        const visited = JSON.parse(localStorage.getItem("visitedRoutes") || "[]");
-        if (!visited.includes(containerData.id)) {
-            visited.push(containerData.id);
-            localStorage.setItem("visitedRoutes", JSON.stringify(visited));
-        }
+        // Mark this stop collected in the shared store the dashboard reads.
+        const id = Number(containerData.id);
+        const collected = loadCollected();
+        if (!collected.includes(id)) saveCollected([...collected, id]);
 
         navigate("/collectors", {
             state: { message: "Container verified", preserveRoute: true }
@@ -200,12 +207,13 @@ export function ContainerVerification() {
 
             // Solicita acceso a la cuenta
             await window.ethereum.request({ method: "eth_requestAccounts" });
+            await ensureChain();
 
             const web3 = new Web3(window.ethereum);
             const accounts = await web3.eth.getAccounts();
             const account = accounts[0];
 
-            const contract = new web3.eth.Contract(AbiCore, "0xe04244Fc660366715D724944d7078775fdCf8318");
+            const contract = new web3.eth.Contract(CORE_ABI, CORE_ADDRESS);
 
             // Asumiendo que el peso viene en kg y lo convertimos a gramos
             const weightInGrams = Math.floor(data.estimatedWeight * 1000);
@@ -241,7 +249,7 @@ export function ContainerVerification() {
         }
 
         try {
-            const response = await fetch("https://zyrcle-backend.diegormdev.site/api/contenedor/validar-codigo", {
+            const response = await fetch(`${API_BASE_URL}/api/contenedor/validar-codigo`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ codigo: manualCode }),
@@ -254,7 +262,7 @@ export function ContainerVerification() {
                 setError(null);
 
                 // ✅ Obtener lista de contenedores
-                const listResponse = await fetch("https://zyrcle-backend.diegormdev.site/api/rutas/quemadas");
+                const listResponse = await fetch(`${API_BASE_URL}/api/rutas/quemadas`);
                 const containers = await listResponse.json();
 
                 // ✅ Elegir uno aleatorio

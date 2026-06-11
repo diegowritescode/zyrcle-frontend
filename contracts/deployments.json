@@ -1,0 +1,10 @@
+{
+  "network": "fuji",
+  "chainId": 43113,
+  "deployer": "0xEBf748F482367cDe60c53abBae3Bd4e130eD656F",
+  "contracts": {
+    "ZyrcleToken": "0x9CDa8729De67e150f66EC1670046313167C2D2F5",
+    "ZyrcleCertificate": "0xa4d2e2277dE703e99D9f351AD9680Cb41FEc0ed6",
+    "ZyrcleCore": "0xF492fe3a73A4438807B7899399328DEE7733A8c3"
+  }
+}

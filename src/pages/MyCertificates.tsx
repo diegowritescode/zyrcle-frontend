@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import Web3 from "web3";
-import AbiCertificate from "@/lib/AbiCertificate";
+import { CERTIFICATE_ABI, CERTIFICATE_ADDRESS } from "@/lib/contracts";
+import { ensureChain } from "@/lib/network";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
-const CONTRACT_ADDRESS = "0xBC40b4722049910591db53a8334842390Ce2128C";
+const ipfs = (uri: string) =>
+    `https://gateway.pinata.cloud/ipfs/${uri.replace("ipfs://", "")}`;
 
 export default function MyCertificates() {
     const [certificates, setCertificates] = useState<any[]>([]);
@@ -15,52 +17,38 @@ export default function MyCertificates() {
     useEffect(() => {
         const fetchCertificates = async () => {
             try {
+                if (!window.ethereum || !CERTIFICATE_ADDRESS) {
+                    setLoading(false);
+                    return;
+                }
+                await ensureChain();
                 const web3 = new Web3(window.ethereum);
                 await window.ethereum.request({ method: "eth_requestAccounts" });
                 const accounts = await web3.eth.getAccounts();
                 const user = accounts[0];
-                const contract = new web3.eth.Contract(AbiCertificate, CONTRACT_ADDRESS);
+                const contract = new web3.eth.Contract(CERTIFICATE_ABI, CERTIFICATE_ADDRESS);
 
-                const latestBlock = Number(await web3.eth.getBlockNumber());
-                const fromBlock = latestBlock - 5000 > 0 ? latestBlock - 1000 : 0;
-
-                const transferEvents = await contract.getPastEvents("Transfer", {
-                    fromBlock,
-                    toBlock: "latest",
-                });
-
-                const ownedTokens = transferEvents
-                    .filter((e) => e.returnValues.to.toLowerCase() === user.toLowerCase())
-                    .map((e) => Number(e.returnValues.tokenId));
-
-                const uniqueTokens = Array.from(new Set(ownedTokens));
+                // Enumerate the user's tokens directly — no event scanning, so we
+                // are immune to the 2048-block getLogs limit on public RPCs.
+                const count = Number(await contract.methods.balanceOf(user).call());
 
                 const results = await Promise.all(
-                    uniqueTokens.map(async (tokenId) => {
+                    Array.from({ length: count }, (_, i) => i).map(async (i) => {
                         try {
-                            const uri = await contract.methods.tokenURI(tokenId).call();
-                            const gatewayUrl = `https://gateway.pinata.cloud/ipfs/${uri.replace("ipfs://", "")}`;
-                            console.log("Fetching metadata for token", tokenId, "→", gatewayUrl);
-
-                            const response = await fetch(gatewayUrl);
+                            const tokenId = await contract.methods.tokenOfOwnerByIndex(user, i).call();
+                            const uri: string = await contract.methods.tokenURI(tokenId).call();
+                            const response = await fetch(ipfs(uri));
                             if (!response.ok) throw new Error(`Failed to fetch: ${response.statusText}`);
-
-                            const text = await response.text();
-                            const metadata = JSON.parse(text);
-
-                            return {
-                                tokenId: Number(tokenId),
-                                ...metadata,
-                            };
+                            const metadata = JSON.parse(await response.text());
+                            return { tokenId: Number(tokenId), ...metadata };
                         } catch (innerErr) {
-                            console.warn(`Error processing token ID ${tokenId}:`, innerErr);
+                            console.warn(`Error processing token index ${i}:`, innerErr);
                             return null;
                         }
                     })
                 );
 
-                const filtered = results.filter((r) => r !== null);
-                setCertificates(filtered);
+                setCertificates(results.filter((r) => r !== null));
             } catch (err) {
                 console.error("Error fetching certificates:", err);
             } finally {
@@ -92,7 +80,7 @@ export default function MyCertificates() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                         {certificates.map((cert) => (
                             <Card key={cert.tokenId} className="overflow-hidden shadow-md">
-                                <img src={cert.image} alt={cert.name} className="w-full h-48 object-cover" />
+                                <img src={ipfs(cert.image)} alt={cert.name} className="w-full h-48 object-cover" />
                                 <CardHeader>
                                     <CardTitle className="text-lg text-eco-forest">{cert.name}</CardTitle>
                                     <CardDescription className="text-eco-forest/70">Token ID: {cert.tokenId}</CardDescription>
@@ -102,12 +90,7 @@ export default function MyCertificates() {
                                     <Button
                                         variant="outline"
                                         className="w-full"
-                                        onClick={() =>
-                                            window.open(
-                                                `https://gateway.pinata.cloud/ipfs/${cert.image.replace("ipfs://", "")}`,
-                                                "_blank"
-                                            )
-                                        }
+                                        onClick={() => window.open(ipfs(cert.image), "_blank")}
                                     >
                                         View Certificate
                                     </Button>

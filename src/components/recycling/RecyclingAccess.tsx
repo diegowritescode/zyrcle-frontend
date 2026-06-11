@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
+import { API_BASE_URL } from "@/lib/api";
 import { QrCode, CheckCircle, XCircle, Recycle, Check, Edit, MapPin, CircleDollarSign } from "lucide-react";
 import { connectWallet, depositWaste } from "@/services/web3Service";
-import { QrReader } from "react-qr-reader";
+import { Scanner, IDetectedBarcode } from "@yudiel/react-qr-scanner";
 import {
     Card,
     CardContent,
@@ -20,9 +21,8 @@ import {
 } from "@/components/ui/tooltip";
 
 import Web3 from "web3";
-import AbiToken from "../../lib/TokenAbi";
+import { TOKEN_ABI, TOKEN_ADDRESS } from "@/lib/contracts";
 
-const TOKEN_ADDRESS = "0xdaE9f1674b494B72210d7FBBEb27Fc32d590D7EA";
 
 
 // Define interfaces for API responses
@@ -32,11 +32,6 @@ interface ValidationResponse {
 
 interface FinalizeResponse {
     message: string;
-}
-
-// Define type for QR scan result
-interface QrScanResult {
-    text: string;
 }
 
 // Mock container data for details display
@@ -78,7 +73,7 @@ const mockContainerData = [
 
 export async function getZirBalance(address: string): Promise<number> {
     const web3 = new Web3(window.ethereum);
-    const token = new web3.eth.Contract(AbiToken, TOKEN_ADDRESS);
+    const token = new web3.eth.Contract(TOKEN_ABI, TOKEN_ADDRESS);
     const balance = await token.methods.balanceOf(address).call();
     return parseFloat(web3.utils.fromWei(balance, "ether"));
 }
@@ -97,9 +92,9 @@ export function RecyclingAccess() {
     // Mock static Zir balance (to be replaced with dynamic wallet balance)
 
     // Handle QR code scan
-    const handleScan = (data: QrScanResult | null) => {
-        if (data?.text) {
-            const code = data.text;
+    const handleScan = (codes: IDetectedBarcode[]) => {
+        const code = codes[0]?.rawValue;
+        if (code) {
             if (/^\d{6}$/.test(code)) {
                 setQrCode(code);
                 validateCode(code);
@@ -127,7 +122,7 @@ export function RecyclingAccess() {
     // Validate code via API
     const validateCode = async (code: string) => {
         try {
-            const response = await fetch("https://zyrcle-backend.diegormdev.site/api/contenedor/validar-codigo", {
+            const response = await fetch(`${API_BASE_URL}/api/contenedor/validar-codigo`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ codigo: code }),
@@ -178,7 +173,7 @@ export function RecyclingAccess() {
         const timeSpent = (endTime - startTime) / 1000; // Tiempo en segundos
 
         try {
-            const response = await fetch("https://zyrcle-backend.diegormdev.site/api/contenedor/finalizar", {
+            const response = await fetch(`${API_BASE_URL}/api/contenedor/finalizar`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -331,11 +326,11 @@ export function RecyclingAccess() {
                         ) : isScanning ? (
                             <div className="space-y-4">
                                 <div className="relative aspect-square max-w-md mx-auto">
-                                    <QrReader
-                                        onResult={handleScan}
-                                        onError={handleError}
+                                    <Scanner
+                                        onScan={handleScan}
+                                        onError={(err) => handleError(err as Error)}
                                         constraints={{ facingMode: "environment" }}
-                                        className="w-full rounded-lg overflow-hidden"
+                                        classNames={{ container: "w-full rounded-lg overflow-hidden" }}
                                     />
                                     <div className="absolute inset-0 border-4 border-eco-emerald/50 rounded-lg pointer-events-none animate-pulse" />
                                     <p className="text-center text-sm text-eco-forest/70 mt-2">

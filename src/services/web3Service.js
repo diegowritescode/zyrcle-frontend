@@ -1,7 +1,7 @@
 // services/web3Service.js
 import Web3 from "web3";
-import { ABI } from '../lib/utils'
-import AbiCore from '../lib/Abis'
+import { CORE_ABI, CORE_ADDRESS } from '../lib/contracts'
+import { ensureChain } from '../lib/network'
 
 // Instancia global de Web3
 let web3Instance = null;
@@ -10,6 +10,7 @@ let web3Instance = null;
 export const connectWallet = async () => {
     if (window.ethereum) {
         try {
+            await ensureChain();  // Asegura que la wallet esté en la red correcta (Fuji)
             const web3 = new Web3(window.ethereum);
             web3Instance = web3;  // Guarda la instancia de web3 si la necesitas en otro lugar
 
@@ -20,8 +21,8 @@ export const connectWallet = async () => {
             }
 
             const account = accounts[0]; // Usar la primera cuenta
-            const zyrcleCoreAbi = AbiCore;
-            const zyrcleCoreAddress = "0x3B677E9ab4C216433Aadc61341DB3C750B493C1b"; // Dirección del contrato ZyrcleCore
+            const zyrcleCoreAbi = CORE_ABI;
+            const zyrcleCoreAddress = CORE_ADDRESS; // Dirección del contrato ZyrcleCore
 
             const zyrcleCore = new web3.eth.Contract(zyrcleCoreAbi, zyrcleCoreAddress); // Solo inicializamos el contrato si tenemos una cuenta válida
 

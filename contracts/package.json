@@ -1,0 +1,19 @@
+{
+  "name": "zyrcle-contracts",
+  "version": "1.0.0",
+  "description": "Zyrcle smart contracts (Token, Certificate, Core) reconstructed from frontend ABIs",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:fuji": "hardhat run scripts/deploy.js --network fuji"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.6.1",
+    "dotenv": "^16.6.1",
+    "hardhat": "^2.28.6"
+  }
+}
