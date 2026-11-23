@@ -1,3 +1,10 @@
+> **This repository is archived.** Zyrcle continues in the monorepo
+> [github.com/diegowritescode/zyrcle](https://github.com/diegowritescode/zyrcle), where this code was
+> imported with its full history (tag `v0-hackathon`, folder `apps/web` at that tag) and then rebuilt.
+> What happened since is in [docs/history.md](https://github.com/diegowritescode/zyrcle/blob/main/docs/history.md).
+>
+> **Este repositorio está archivado.** Zyrcle sigue en el monorepo de arriba.
+
 # Zyrcle - Sustainable Recycling dApp
 
 **Zyrcle** is a decentralized application (dApp) that revolutionizes recycling using the **Avalanche** blockchain, IoT sensors, and AI. Built with **React** for a dynamic frontend and **Web3.js** for blockchain interactions, Zyrcle enables users to recycle materials, earn ZYRCLE tokens, mint carbon credit NFTs, and purchase eco-friendly products while tracking environmental impact.
